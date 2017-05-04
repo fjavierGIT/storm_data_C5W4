@@ -1,0 +1,157 @@
+---
+title: "Most harmful types of events across the United States"
+author: "Javier Angoy"
+date: "May 6th, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library("stringr")
+library("reshape2")
+library("ggplot2")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+The basic goal of this assignment is to explore the NOAA Storm Database and answer two basic questions about severe weather events:  
+    1. Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?  
+    2. Across the United States, which types of events have the greatest economic consequences?  
+
+## Data Processing
+
+The data for this assignment come in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size, and can be downloaded from the site:
+"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"  
+
+The .csv file is loaded with the read.csv function in a single data frame.  The data for the event type is stored in the EVTYPE variable. Special characters as well as blank spaces make it difficult to identify duplicate event names. We decided to delete special characters as well as empty spaces. The 'newEvent' function has been created to simplify the EVTYPE variable, renaming and joining duplicate events.  
+
+In addition, EVTYPE, CROPDMGEXP and PROPDMGEXP variable are coerced to Factor. That will make subsequent operations easier.  
+
+```{r Read Data}
+    #Downloads and reads data
+    if(!file.exists("./repdata_data_StormData.csv.bz2")){
+            fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+            download.file(fileUrl, destfile = "./repdata_data_StormData.csv.bz2", method = "auto")
+        }
+    if(!file.exists("./repdata_data_StormData.csv")){
+            fileName <- "repdata_data_StormData.csv"
+            unzip("./repdata_data_StormData.csv.bz2")
+        }
+    if(!exists("StormData")) {
+            StormData <- read.csv("./repdata_data_StormData.csv.bz2", na.strings = "NA")
+        }
+    #Variable processing
+    StormData$EVTYPE <- as.character(toupper(str_replace_all(StormData$EVTYPE,"[:punct:]|[:space:]","")))
+    newEvent <- function(x) { 
+        if (grepl("^HURRICANE", x))             {return("HURRICANE")}
+        else if (grepl("^TSTMWIND", x))         {return("THUNDERSTORMWIND")}
+        else if (grepl("^THUNDERSTORMWIND", x)) {return("THUNDERSTORMWIND")}
+        else if (grepl("^HIGHWIND", x))         {return("HIGHWIND")}
+        else if (grepl("^WILDFORESTFIRE", x))   {return("WILDFIRE")}
+        else if (grepl("^FLASHFLOODING", x))    {return("FLASHFLOOD")}
+        else if (grepl("^URBANSMLSTREAMFLD", x)){return("FLOOD")}
+        else if (grepl("^FLOODING", x))         {return("FLOOD")}
+        else if (grepl("^RIPCURRENTS", x))      {return("RIPCURRENT")}
+        else if (grepl("^HEATWAVE", x))         {return("EXCESSIVEHEAT")}
+        else if (grepl("^EXTREMEHEAT", x))      {return("EXCESSIVEHEAT")}
+        else return(x)
+        }
+    StormData$EVTYPE <- sapply(StormData$EVTYPE, function(x) newEvent(x))
+    StormData$EVTYPE <- as.factor(StormData$EVTYPE)
+    StormData$CROPDMGEXP <- as.factor(toupper(as.character(StormData$CROPDMGEXP)))
+    StormData$PROPDMGEXP <- as.factor(toupper(as.character(StormData$PROPDMGEXP)))
+```
+
+## Results
+
+### HUMAN DAMAGES
+
+First we create a data frame that aggregates fatalities and injuries by event type. It also considers only events with more than 0 damages.  Then we calculate a new dataset for each type of human damages with the top ten events more harmful.  
+
+```{r Human Damages 1}
+    StormData.HumanDamages <- na.omit(aggregate(cbind(INJURIES, FATALITIES) ~ EVTYPE, 
+                    data = StormData, FUN = sum, subset=(INJURIES >0 | FATALITIES >0)))
+    StormData.HumanDamages.fatal <- StormData.HumanDamages[order(StormData.HumanDamages$FATALITIES,
+                    decreasing = TRUE),][1:10,c(1,3)]
+    StormData.HumanDamages.injur <- StormData.HumanDamages[order(StormData.HumanDamages$INJURIES,
+                    decreasing = TRUE),][1:10,c(1,2)]
+```
+    
+The top ten events with the higher number of fatalities are:  
+
+```{r Human Damages 2}
+    head(StormData.HumanDamages.fatal,10)
+```
+
+The top ten events with the higher number of injuries are:  
+
+```{r Human Damages 3}
+    head(StormData.HumanDamages.injur,10)
+```
+
+As we can see, the most damaging events for people are Tornadoes, which cause the greatest number of fatalities as well as injuries. As for the events with result of fatality, the second most harmful would be Excessive Heat, while Thunderstorm Winds are the second major cause of injury.  
+
+```{r}
+    par(mfrow = c(2, 1), mar = c(6, 4, 2, 1))
+    with(StormData.HumanDamages.fatal,
+         barplot(FATALITIES, names.arg = EVTYPE, cex.names = 0.7, col = "red", las=2))
+    title("Fatalities by Event Type", line = -1)     
+    mtext("HUMAN DAMAGES",side = 3, padj = 1, cex = 2, line = 1.5)
+    with(StormData.HumanDamages.injur,
+         barplot(INJURIES, names.arg = EVTYPE, cex.names = 0.7, col = "blue",las=2))
+    title("Injuries by Event Type", line = -1)
+```
+
+### ECONOMY DAMAGES
+
+First we select the columns that contain the economic damage data along with the Events column. In addition we select only the registers with value> 0.  
+We must transform the alphanumeric data stored in the magnitude columns CROPDMGEXP and PROPDMGEXP into multipliers with which we can calculate data. The 'magnitude' function has been created to help us convert quantities. Next we have created a 'Total' column for each category of economic damage.  
+
+```{r Economic Damages 1}
+    StormData.EcoDamages <- StormData[StormData$PROPDMG>0|StormData$CROPDMG>0,
+                                      c("EVTYPE","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP")]
+    magnitude <- function(x) { 
+        if (x == "H")       {return(100)}
+        else if (x == "K")  {return(1000)}
+        else if (x == "M")  {return(1000000)}
+        else if (x == "B")  {return(1000000000)}
+        else return(1)
+}
+    # Make separate data columns for multipliers and totals
+    StormData.EcoDamages$PROPDMG.MULT <- sapply(StormData.EcoDamages$PROPDMGEXP, 
+                    function(x) magnitude(x)) #Multiplier for Property Damages
+    StormData.EcoDamages$TOTAL.PROPDMG <- with(StormData.EcoDamages, PROPDMG * PROPDMG.MULT) #Total Prop
+
+    StormData.EcoDamages$CROPDMG.MULT <- sapply(StormData.EcoDamages$CROPDMGEXP, 
+                    function(x) magnitude(x)) #Multiplier for Crop Damages
+    StormData.EcoDamages$TOTAL.CROPDMG <- with(StormData.EcoDamages, CROPDMG * CROPDMG.MULT) #Total Crop
+```
+
+Next we calculate the sums by Event type, as well as the total sum in the TOTAL column. Finally we rearrange the data by the column TOTAL downward, to keep the 10 most harmful events.  
+
+```{r Economic Damages 2}
+    StormData.EcoDamages.Total <- na.omit(aggregate(cbind(TOTAL.PROPDMG, TOTAL.CROPDMG) ~ EVTYPE, 
+                    data = StormData.EcoDamages, FUN = sum)) #Computes agrregated sum
+
+    StormData.EcoDamages.Total$TOTAL <- with(StormData.EcoDamages.Total, TOTAL.PROPDMG + TOTAL.CROPDMG)
+    StormData.EcoDamages.Total <- StormData.EcoDamages.Total[order(StormData.EcoDamages.Total$TOTAL,
+                    decreasing = TRUE),][1:10,]
+    ```
+
+The top ten events with the highest economic cost are:  
+
+```{r Economic Damages 3}
+    print(StormData.EcoDamages.Total)
+```
+
+
+We can see that the events with the worst economic consequences in absolute terms are the floods in the first place, followed by the hurricanes. However we can note that if we only consider the effects on crops, droughts would be the most damaging type of events.  
+
+```{r}
+    #Melt helps rearrange data to plot
+    StormData.EcoDamages.Total.melted <- melt(StormData.EcoDamages.Total
+                    [,c("EVTYPE","TOTAL.PROPDMG","TOTAL.CROPDMG")], id = c("EVTYPE"))
+    p <- ggplot(StormData.EcoDamages.Total.melted) + geom_col(aes(x = reorder(EVTYPE, -value), y = value, fill = variable))
+    p + labs(title = "ECONOMY DAMAGES", x = "Event Type", y = "Total Damages") + scale_color_manual() + theme(axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5, size=22)) + scale_fill_discrete(name = "", labels = c("Property Damages", "Crop Damages"))
+```
+
+As a final conclusion we can determine that the events with the worst consequences are those related to tornadoes, floods and droughts.
